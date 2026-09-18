@@ -64,3 +64,47 @@ export async function mergePdfs(files: File[]): Promise<ConvertResult> {
   const filename = parseFilename(res.headers.get("content-disposition"), "merged.pdf");
   return { blob, filename };
 }
+
+// ---------------------------------------------------------------------------
+// PDF page operations
+// ---------------------------------------------------------------------------
+export type SplitMode =
+  | { type: "every_page" }
+  | { type: "every_n"; n: number }
+  | { type: "ranges"; ranges: [number, number][] };
+
+async function postPdfOp(
+  path: string,
+  file: File,
+  options: Record<string, unknown> | undefined,
+  fallbackName: string,
+): Promise<ConvertResult> {
+  const form = new FormData();
+  form.append("file", file);
+  if (options !== undefined) form.append("options", JSON.stringify(options));
+  const res = await fetch(path, { method: "POST", body: form });
+  if (!res.ok) await throwOnError(res);
+  const blob = await res.blob();
+  const filename = parseFilename(res.headers.get("content-disposition"), fallbackName);
+  return { blob, filename };
+}
+
+export async function splitPdf(file: File, mode: SplitMode): Promise<ConvertResult> {
+  const stem = file.name.replace(/\.pdf$/i, "");
+  return postPdfOp("/api/pdf/split", file, { mode }, `${stem}-split.zip`);
+}
+
+export async function deletePdfPages(file: File, pages: number[]): Promise<ConvertResult> {
+  const stem = file.name.replace(/\.pdf$/i, "");
+  return postPdfOp("/api/pdf/delete-pages", file, { pages }, `${stem}-edited.pdf`);
+}
+
+export async function extractPdfPages(file: File, pages: number[]): Promise<ConvertResult> {
+  const stem = file.name.replace(/\.pdf$/i, "");
+  return postPdfOp("/api/pdf/extract-pages", file, { pages }, `${stem}-extracted.pdf`);
+}
+
+export async function reorderPdfPages(file: File, order: number[]): Promise<ConvertResult> {
+  const stem = file.name.replace(/\.pdf$/i, "");
+  return postPdfOp("/api/pdf/reorder-pages", file, { order }, `${stem}-reordered.pdf`);
+}

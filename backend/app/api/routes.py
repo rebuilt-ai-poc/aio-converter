@@ -10,7 +10,17 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
-from ..converters import CONVERSIONS, get_converter, merge_pdfs, possible_targets
+from ..converters import (
+    CONVERSIONS,
+    delete_pdf_pages,
+    extract_pdf_pages,
+    get_converter,
+    merge_pdfs,
+    possible_targets,
+    reorder_pdf_pages,
+    split_pdf,
+    zip_outputs,
+)
 from ..converters.documents import find_soffice
 from ..core.config import (
     MAX_FILE_SIZE_BYTES,
@@ -24,6 +34,7 @@ from ..core.errors import (
     ConverterError,
     FileTooLargeError,
     InvalidFileError,
+    InvalidOptionsError,
     UnsupportedFormatError,
 )
 from ..core.files import ensure_dir, output_filename, peek, remove_dir, safe_stem, save_upload
@@ -64,6 +75,10 @@ def system() -> dict[str, Any]:
         f"{s}->{t}": _pair_available(s, t, engines) for (s, t) in CONVERSIONS
     }
     availability["pdf[]->pdf"] = engines["pymupdf"]
+    availability["pdf:split"] = engines["pymupdf"]
+    availability["pdf:delete-pages"] = engines["pymupdf"]
+    availability["pdf:extract-pages"] = engines["pymupdf"]
+    availability["pdf:reorder-pages"] = engines["pymupdf"]
     return {
         "engines": engines,
         "conversions": availability,
@@ -192,6 +207,135 @@ async def merge_pdf(
         path=output_path,
         media_type="application/pdf",
         filename="merged.pdf",
+    )
+
+
+# ---------------------------------------------------------------------------
+# PDF page operations: split / delete / extract / reorder
+# ---------------------------------------------------------------------------
+async def _save_pdf_upload(
+    background: BackgroundTasks, file: UploadFile, prefix: str
+) -> tuple[Path, Path, str]:
+    """Save a single PDF upload to a temp workdir. Returns (workdir, input_path, stem)."""
+    workdir = Path(tempfile.mkdtemp(prefix=prefix))
+    background.add_task(remove_dir, workdir)
+
+    name = file.filename or "input.pdf"
+    stem = safe_stem(Path(name).stem or "input")
+    input_path = workdir / f"input_{stem}.pdf"
+    await save_upload(file, input_path)
+
+    fmt = detect_format(name, peek(input_path))
+    if fmt != "pdf":
+        raise InvalidFileError(f"{name} is not a PDF")
+
+    return workdir, input_path, stem
+
+
+def _require_option(opts: dict[str, Any], key: str) -> Any:
+    if key not in opts:
+        raise InvalidOptionsError(f"Missing required option: {key}")
+    return opts[key]
+
+
+@router.post("/pdf/split")
+async def pdf_split(
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    options: str | None = Form(None),
+) -> FileResponse:
+    opts = _parse_options(options)
+    # Default to every_page when no options provided.
+    if not opts:
+        mode: dict[str, Any] = {"type": "every_page"}
+    else:
+        mode_val = opts.get("mode") if "mode" in opts else opts.get("type")
+        if isinstance(mode_val, dict):
+            mode = mode_val
+        elif isinstance(mode_val, str):
+            mode = {"type": mode_val}
+            if "n" in opts:
+                mode["n"] = opts["n"]
+            if "ranges" in opts:
+                mode["ranges"] = opts["ranges"]
+        else:
+            raise InvalidOptionsError("options must contain a 'mode' field")
+
+    workdir, input_path, stem = await _save_pdf_upload(background, file, "pdfsplit-")
+    parts_dir = workdir / "parts"
+    written = split_pdf(input_path, parts_dir, mode)
+
+    zip_name = f"{stem}-split.zip"
+    zip_path = workdir / zip_name
+    zip_outputs(written, zip_path)
+
+    return FileResponse(
+        path=zip_path,
+        media_type="application/zip",
+        filename=zip_name,
+    )
+
+
+@router.post("/pdf/delete-pages")
+async def pdf_delete_pages(
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    options: str = Form(...),
+) -> FileResponse:
+    opts = _parse_options(options)
+    pages = _require_option(opts, "pages")
+
+    workdir, input_path, stem = await _save_pdf_upload(background, file, "pdfdel-")
+    out_name = f"{stem}-edited.pdf"
+    output_path = workdir / out_name
+    delete_pdf_pages(input_path, output_path, pages)
+
+    return FileResponse(
+        path=output_path,
+        media_type="application/pdf",
+        filename=out_name,
+    )
+
+
+@router.post("/pdf/extract-pages")
+async def pdf_extract_pages(
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    options: str = Form(...),
+) -> FileResponse:
+    opts = _parse_options(options)
+    pages = _require_option(opts, "pages")
+
+    workdir, input_path, stem = await _save_pdf_upload(background, file, "pdfext-")
+    out_name = f"{stem}-extracted.pdf"
+    output_path = workdir / out_name
+    extract_pdf_pages(input_path, output_path, pages)
+
+    return FileResponse(
+        path=output_path,
+        media_type="application/pdf",
+        filename=out_name,
+    )
+
+
+@router.post("/pdf/reorder-pages")
+async def pdf_reorder_pages(
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    options: str = Form(...),
+) -> FileResponse:
+    opts = _parse_options(options)
+    order = _require_option(opts, "order")
+
+    workdir, input_path, stem = await _save_pdf_upload(background, file, "pdfreord-")
+    out_name = f"{stem}-reordered.pdf"
+    output_path = workdir / out_name
+    reorder_pdf_pages(input_path, output_path, order)
+
+    return FileResponse(
+        path=output_path,
+        media_type="application/pdf",
+        filename=out_name,
     )
 
 

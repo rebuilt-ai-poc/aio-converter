@@ -23,6 +23,11 @@ class InvalidFileError(ConverterError):
     http_status = 400
 
 
+class InvalidOptionsError(ConverterError):
+    code = "INVALID_OPTIONS"
+    http_status = 400
+
+
 class FileTooLargeError(ConverterError):
     code = "FILE_TOO_LARGE"
     http_status = 413

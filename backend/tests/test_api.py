@@ -177,3 +177,134 @@ def test_convert_epub_to_pdf(fixtures_dir: Path) -> None:
         doc.close()
     assert "Chapter One" in text
     assert "SIMPLE_EPUB_CH2" in text
+
+
+# ---------------------------------------------------------------------------
+# PDF page operations
+# ---------------------------------------------------------------------------
+def test_system_lists_pdf_operations() -> None:
+    body = client.get("/api/system").json()
+    for key in ("pdf:split", "pdf:delete-pages", "pdf:extract-pages", "pdf:reorder-pages"):
+        assert key in body["conversions"], body["conversions"]
+        assert body["conversions"][key] is True
+
+
+def test_pdf_split_returns_zip(fixtures_dir: Path) -> None:
+    import io
+    import zipfile
+
+    with (fixtures_dir / "ten-page.pdf").open("rb") as f:
+        r = client.post(
+            "/api/pdf/split",
+            data={"options": '{"mode": "every_n", "n": 3}'},
+            files={"file": ("ten-page.pdf", f, "application/pdf")},
+        )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    assert "ten-page-split.zip" in r.headers["content-disposition"]
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    names = sorted(zf.namelist())
+    assert names == ["part-01.pdf", "part-02.pdf", "part-03.pdf", "part-04.pdf"]
+
+
+def test_pdf_delete_pages(fixtures_dir: Path) -> None:
+    import pymupdf
+
+    with (fixtures_dir / "ten-page.pdf").open("rb") as f:
+        r = client.post(
+            "/api/pdf/delete-pages",
+            data={"options": '{"pages": [3, 5]}'},
+            files={"file": ("ten-page.pdf", f, "application/pdf")},
+        )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/pdf"
+    assert "ten-page-edited.pdf" in r.headers["content-disposition"]
+    doc = pymupdf.open(stream=r.content, filetype="pdf")
+    try:
+        text = "\n".join(p.get_text("text") for p in doc)
+        assert doc.page_count == 8
+    finally:
+        doc.close()
+    assert "PAGE#3" not in text
+    assert "PAGE#5" not in text
+    assert "PAGE#1" in text and "PAGE#10" in text
+
+
+def test_pdf_delete_pages_rejects_deleting_all(fixtures_dir: Path) -> None:
+    with (fixtures_dir / "three-page.pdf").open("rb") as f:
+        r = client.post(
+            "/api/pdf/delete-pages",
+            data={"options": '{"pages": [1, 2, 3]}'},
+            files={"file": ("three-page.pdf", f, "application/pdf")},
+        )
+    assert r.status_code == 400, r.text
+    body = r.json()
+    assert body["error"]["code"] == "INVALID_OPTIONS"
+
+
+def test_pdf_extract_pages(fixtures_dir: Path) -> None:
+    import pymupdf
+
+    with (fixtures_dir / "ten-page.pdf").open("rb") as f:
+        r = client.post(
+            "/api/pdf/extract-pages",
+            data={"options": '{"pages": [2, 4, 7, 8]}'},
+            files={"file": ("ten-page.pdf", f, "application/pdf")},
+        )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/pdf"
+    assert "ten-page-extracted.pdf" in r.headers["content-disposition"]
+    doc = pymupdf.open(stream=r.content, filetype="pdf")
+    try:
+        assert doc.page_count == 4
+        pages = [p.get_text("text") for p in doc]
+    finally:
+        doc.close()
+    assert "PAGE#2" in pages[0]
+    assert "PAGE#4" in pages[1]
+    assert "PAGE#7" in pages[2]
+    assert "PAGE#8" in pages[3]
+
+
+def test_pdf_reorder_pages(fixtures_dir: Path) -> None:
+    import pymupdf
+
+    with (fixtures_dir / "three-page.pdf").open("rb") as f:
+        r = client.post(
+            "/api/pdf/reorder-pages",
+            data={"options": '{"order": [3, 1, 2]}'},
+            files={"file": ("three-page.pdf", f, "application/pdf")},
+        )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/pdf"
+    assert "three-page-reordered.pdf" in r.headers["content-disposition"]
+    doc = pymupdf.open(stream=r.content, filetype="pdf")
+    try:
+        pages = [p.get_text("text") for p in doc]
+    finally:
+        doc.close()
+    assert "THREE#3" in pages[0]
+    assert "THREE#1" in pages[1]
+    assert "THREE#2" in pages[2]
+
+
+def test_pdf_reorder_rejects_non_permutation(fixtures_dir: Path) -> None:
+    with (fixtures_dir / "three-page.pdf").open("rb") as f:
+        r = client.post(
+            "/api/pdf/reorder-pages",
+            data={"options": '{"order": [1, 2]}'},
+            files={"file": ("three-page.pdf", f, "application/pdf")},
+        )
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "INVALID_OPTIONS"
+
+
+def test_pdf_split_rejects_non_pdf(fixtures_dir: Path) -> None:
+    with (fixtures_dir / "opaque.png").open("rb") as f:
+        r = client.post(
+            "/api/pdf/split",
+            data={"options": '{"mode": "every_page"}'},
+            files={"file": ("opaque.png", f, "image/png")},
+        )
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "INVALID_FILE"

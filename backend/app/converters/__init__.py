@@ -17,7 +17,17 @@ from .documents import (
     markdown_to_pdf,
     txt_to_pdf,
 )
-from .pdf import pdf_to_txt, pdf_to_markdown, pdf_to_docx, merge_pdfs  # noqa: F401
+from .pdf import (  # noqa: F401
+    pdf_to_txt,
+    pdf_to_markdown,
+    pdf_to_docx,
+    merge_pdfs,
+    split_pdf,
+    delete_pdf_pages,
+    extract_pdf_pages,
+    reorder_pdf_pages,
+    zip_outputs,
+)
 
 
 # A converter takes (input_path, output_path, options) and writes output_path.

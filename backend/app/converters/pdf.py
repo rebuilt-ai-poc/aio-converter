@@ -10,7 +10,9 @@ import statistics
 from pathlib import Path
 from typing import Any
 
-from ..core.errors import ConversionError, InvalidFileError
+import zipfile
+
+from ..core.errors import ConversionError, InvalidFileError, InvalidOptionsError
 
 
 # ---------------------------------------------------------------------------
@@ -299,3 +301,213 @@ def merge_pdfs(inputs: list[Path], output_path: Path) -> None:
         output.save(str(output_path), garbage=3, deflate=True)
     finally:
         output.close()
+
+
+# ---------------------------------------------------------------------------
+# PDF page operations: split / delete / extract / reorder
+# ---------------------------------------------------------------------------
+def _open_pdf(path: Path):
+    import pymupdf
+
+    try:
+        doc = pymupdf.open(path)
+    except Exception as e:
+        raise InvalidFileError(f"Could not open PDF: {e}") from e
+    # PyMuPDF opens many document types; reject anything that's not a PDF so
+    # insert_pdf/delete_pages don't crash with a raw RuntimeError downstream.
+    if not doc.is_pdf:
+        doc.close()
+        raise InvalidFileError("Input is not a PDF")
+    return doc
+
+
+def _validate_page_list(
+    pages: list[int], page_count: int, *, allow_repeat: bool = False, label: str = "pages"
+) -> None:
+    if not isinstance(pages, list) or not pages:
+        raise InvalidOptionsError(f"{label} must be a non-empty list")
+    for p in pages:
+        if not isinstance(p, int) or isinstance(p, bool):
+            raise InvalidOptionsError(f"{label} must contain integers")
+        if p < 1 or p > page_count:
+            raise InvalidOptionsError(
+                f"Page {p} is out of range (document has {page_count} pages)"
+            )
+    if not allow_repeat and len(set(pages)) != len(pages):
+        raise InvalidOptionsError(f"{label} must not contain duplicates")
+
+
+def _validate_permutation(order: list[int], page_count: int) -> None:
+    if not isinstance(order, list):
+        raise InvalidOptionsError("order must be a list")
+    if len(order) != page_count:
+        raise InvalidOptionsError(
+            f"order must contain exactly {page_count} entries (got {len(order)})"
+        )
+    for p in order:
+        if not isinstance(p, int) or isinstance(p, bool):
+            raise InvalidOptionsError("order must contain integers")
+    if set(order) != set(range(1, page_count + 1)):
+        raise InvalidOptionsError(
+            f"order must be a permutation of 1..{page_count} with no duplicates or missing pages"
+        )
+
+
+def _reject_delete_all(pages: list[int], page_count: int) -> None:
+    if set(pages) == set(range(1, page_count + 1)):
+        raise InvalidOptionsError(
+            "Cannot delete every page — the output PDF would be empty"
+        )
+
+
+def _build_from_indices(input_path: Path, output_path: Path, indices_0based: list[int]) -> None:
+    """Build a new PDF containing the pages in `indices_0based`, in the given order."""
+    import pymupdf
+
+    source = _open_pdf(input_path)
+    try:
+        output = pymupdf.open()
+        try:
+            for i in indices_0based:
+                output.insert_pdf(source, from_page=i, to_page=i)
+            output.save(str(output_path), garbage=3, deflate=True)
+        finally:
+            output.close()
+    finally:
+        source.close()
+
+
+def split_pdf(
+    input_path: Path, output_dir: Path, mode: dict[str, Any]
+) -> list[Path]:
+    """Split a PDF into multiple PDFs by `mode`.
+
+    Modes:
+      {"type": "every_page"}                       — one output per page
+      {"type": "every_n", "n": int}                — chunks of N pages
+      {"type": "ranges", "ranges": [[a, b], ...]}  — 1-indexed inclusive ranges
+
+    Returns the written paths in order. Naming uses dynamic zero-padding
+    (`part-01.pdf`, `part-001.pdf`) so alphabetical order is preserved.
+    """
+    import pymupdf
+
+    if not isinstance(mode, dict):
+        raise InvalidOptionsError("mode must be an object")
+    kind = mode.get("type")
+    if kind not in {"every_page", "every_n", "ranges"}:
+        raise InvalidOptionsError(
+            "mode.type must be one of 'every_page', 'every_n', 'ranges'"
+        )
+
+    source = _open_pdf(input_path)
+    try:
+        page_count = source.page_count
+        if page_count == 0:
+            raise InvalidOptionsError("Input PDF has no pages")
+
+        chunks: list[tuple[int, int]] = []  # 0-indexed inclusive [from, to]
+
+        if kind == "every_page":
+            chunks = [(i, i) for i in range(page_count)]
+        elif kind == "every_n":
+            n = mode.get("n")
+            if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+                raise InvalidOptionsError("mode.n must be a positive integer")
+            for start in range(0, page_count, n):
+                chunks.append((start, min(start + n - 1, page_count - 1)))
+        else:  # ranges
+            ranges = mode.get("ranges")
+            if not isinstance(ranges, list) or not ranges:
+                raise InvalidOptionsError("mode.ranges must be a non-empty list")
+            for r in ranges:
+                if (
+                    not isinstance(r, list)
+                    or len(r) != 2
+                    or not all(isinstance(x, int) and not isinstance(x, bool) for x in r)
+                ):
+                    raise InvalidOptionsError(
+                        "Each range must be a [start, end] pair of integers"
+                    )
+                start, end = r
+                if start < 1 or end < start or end > page_count:
+                    raise InvalidOptionsError(
+                        f"Range [{start}, {end}] is invalid (document has {page_count} pages)"
+                    )
+                chunks.append((start - 1, end - 1))
+
+        if not chunks:
+            raise InvalidOptionsError("Split produced no output chunks")
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        width = max(2, len(str(len(chunks))))
+        written: list[Path] = []
+        for idx, (a, b) in enumerate(chunks, start=1):
+            out_name = f"part-{idx:0{width}d}.pdf"
+            out_path = output_dir / out_name
+            output = pymupdf.open()
+            try:
+                output.insert_pdf(source, from_page=a, to_page=b)
+                output.save(str(out_path), garbage=3, deflate=True)
+            finally:
+                output.close()
+            written.append(out_path)
+        return written
+    finally:
+        source.close()
+
+
+def delete_pdf_pages(
+    input_path: Path, output_path: Path, pages: list[int]
+) -> None:
+    """Delete the given 1-indexed pages. Rejects deleting every page."""
+    source = _open_pdf(input_path)
+    try:
+        page_count = source.page_count
+        _validate_page_list(pages, page_count, allow_repeat=False, label="pages")
+        _reject_delete_all(pages, page_count)
+        # PyMuPDF: delete_pages takes 0-indexed page numbers.
+        source.delete_pages([p - 1 for p in pages])
+        source.save(str(output_path), garbage=3, deflate=True)
+    finally:
+        source.close()
+
+
+def extract_pdf_pages(
+    input_path: Path, output_path: Path, pages: list[int]
+) -> None:
+    """Build a new PDF containing only the given 1-indexed pages, in order.
+
+    Duplicates are disallowed in V1.
+    """
+    import pymupdf
+
+    source = _open_pdf(input_path)
+    try:
+        page_count = source.page_count
+        _validate_page_list(pages, page_count, allow_repeat=False, label="pages")
+    finally:
+        source.close()
+    _build_from_indices(input_path, output_path, [p - 1 for p in pages])
+
+
+def reorder_pdf_pages(
+    input_path: Path, output_path: Path, order: list[int]
+) -> None:
+    """Reorder pages by an exact permutation of 1..page_count."""
+    source = _open_pdf(input_path)
+    try:
+        page_count = source.page_count
+        _validate_permutation(order, page_count)
+    finally:
+        source.close()
+    _build_from_indices(input_path, output_path, [p - 1 for p in order])
+
+
+def zip_outputs(paths: list[Path], zip_path: Path) -> None:
+    """Zip the given files into `zip_path`, using their basenames as entry names."""
+    if not paths:
+        raise ConversionError("No files to zip")
+    with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for p in paths:
+            zf.write(p, arcname=p.name)

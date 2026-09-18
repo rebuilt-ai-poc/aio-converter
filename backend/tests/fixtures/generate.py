@@ -326,6 +326,7 @@ def generate_all() -> None:
     _pdf_simple(FIXTURES / "simple.pdf")
     _pdf_multipage(FIXTURES / "two-page.pdf", 2, "TWO")
     _pdf_multipage(FIXTURES / "three-page.pdf", 3, "THREE")
+    _pdf_multipage(FIXTURES / "ten-page.pdf", 10, "PAGE")
     _pdf_with_headings(FIXTURES / "headings.pdf")
     _pdf_with_table(FIXTURES / "table.pdf")
 
