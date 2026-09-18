@@ -1,0 +1,5 @@
+English: The quick brown fox.
+Français: L'élève a mangé un café.
+Deutsch: Über der grüße Straße.
+Ελληνικά: Καλημέρα κόσμε.
+Русский: Привет, мир!

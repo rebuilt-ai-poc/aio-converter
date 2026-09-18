@@ -1,0 +1,32 @@
+[project]
+name = "aio-converter-backend"
+version = "0.1.0"
+description = "Local all-in-one file converter backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.20",
+    "pymupdf>=1.24",
+    "pymupdf4llm>=0.0.17",
+    "python-docx>=1.1",
+    "reportlab>=4.2",
+    "Pillow>=11.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.28",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

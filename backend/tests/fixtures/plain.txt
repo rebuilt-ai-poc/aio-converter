@@ -1,0 +1,4 @@
+The quick brown fox jumps over the lazy dog.
+This is line two of the plain text fixture.
+
+A blank line separates paragraphs.
