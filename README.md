@@ -174,6 +174,25 @@ Prints a per-engine ✓/✗ table with actionable install hints for anything mis
 
 ## Running the app
 
+### One-shot Windows launcher
+
+For Windows users, `run.bat` at the repo root wires everything up in a single click:
+
+```bat
+run.bat
+```
+
+On first run it will:
+
+1. Prepend `%LOCALAPPDATA%\Pandoc` to `PATH` (winget installs Pandoc per-user, off PATH).
+2. Verify `uv` and `npm` are available.
+3. Create `backend\.venv` via `uv sync` if it doesn't already exist (installs all Python deps from `uv.lock`).
+4. Run `npm install` in `frontend/` if `node_modules` is missing.
+5. Launch the backend (`uv run uvicorn app.main:app --port 8000`) and the frontend (`npm run dev`) each in their own terminal window.
+6. Open `http://localhost:5173` in your default browser.
+
+Subsequent runs skip the install steps and just boot both processes. Close either terminal window to stop that service.
+
 ### Development (two processes, hot reload)
 
 ```bash
