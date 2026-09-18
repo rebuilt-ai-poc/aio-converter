@@ -14,6 +14,7 @@ const EXT_TO_SOURCE: Record<string, SourceFormat> = {
   docx: "docx",
   png: "png",
   svg: "svg",
+  epub: "epub",
 };
 
 const TARGETS_BY_SOURCE: Record<SourceFormat, TargetFormat[]> = {
@@ -23,6 +24,7 @@ const TARGETS_BY_SOURCE: Record<SourceFormat, TargetFormat[]> = {
   docx: ["pdf"],
   png: ["jpg"],
   svg: ["jpg"],
+  epub: ["pdf", "md", "txt"],
 };
 
 const TARGET_LABEL: Record<TargetFormat, string> = {
@@ -76,6 +78,11 @@ function missingDependencyFor(
       return need(e.pymupdf4llm, "PyMuPDF4LLM");
     case "pdf->docx":
       return need(e.python_docx, "python-docx");
+    case "epub->txt":
+    case "epub->md":
+      return need(e.pandoc, "Pandoc");
+    case "epub->pdf":
+      return need(e.pandoc, "Pandoc") ?? need(e.typst, "Typst");
   }
   return null;
 }
@@ -185,7 +192,7 @@ export default function App() {
       {files.length === 0 && (
         <DropZone
           onFiles={(fs) => setFiles(fs)}
-          accept=".pdf,.txt,.md,.markdown,.docx,.png,.svg"
+          accept=".pdf,.txt,.md,.markdown,.docx,.png,.svg,.epub"
           multiple
         />
       )}

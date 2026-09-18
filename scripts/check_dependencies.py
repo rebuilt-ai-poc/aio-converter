@@ -46,6 +46,9 @@ CONVERSIONS = [
     ("DOCX -> PDF", ["soffice"]),
     ("PNG -> JPEG", ["PIL"]),
     ("SVG -> JPEG", ["resvg", "PIL"]),
+    ("EPUB -> TXT", ["pandoc"]),
+    ("EPUB -> Markdown", ["pandoc"]),
+    ("EPUB -> PDF", ["pandoc", "typst"]),
 ]
 
 INSTALL_HINTS = {

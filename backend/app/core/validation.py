@@ -9,7 +9,7 @@ from pathlib import Path
 from .errors import InvalidFileError, UnsupportedFormatError
 
 # Canonical short format codes we accept as inputs.
-SUPPORTED_INPUT_FORMATS = {"pdf", "txt", "md", "docx", "png", "svg"}
+SUPPORTED_INPUT_FORMATS = {"pdf", "txt", "md", "docx", "png", "svg", "epub"}
 SUPPORTED_OUTPUT_FORMATS = {"pdf", "txt", "md", "docx", "jpg"}
 
 # Extension -> canonical format code.
@@ -23,6 +23,7 @@ _EXT_MAP = {
     "svg": "svg",
     "jpg": "jpg",
     "jpeg": "jpg",
+    "epub": "epub",
 }
 
 
@@ -39,8 +40,10 @@ def normalize_format(value: str) -> str:
 def detect_format(filename: str, head: bytes) -> str:
     """Detect a format from filename + a leading chunk of the file's bytes.
 
-    Extension is the primary hint; magic bytes verify or override it when they
-    conflict with a text-like format. Raises on mismatch or unknown format.
+    Magic bytes are authoritative when they decisively identify a format.
+    Zip-based formats (DOCX, EPUB) may share the same PK header — an EPUB
+    with its canonical STORED `mimetype` entry is recognized directly, other
+    Zip files fall through to the extension.
     """
     ext_fmt: str | None = None
     ext = Path(filename or "").suffix.lower().lstrip(".")
@@ -49,29 +52,30 @@ def detect_format(filename: str, head: bytes) -> str:
 
     magic_fmt = _magic_format(head)
 
-    # Magic wins when it's decisive; text-ish formats have no magic.
     if magic_fmt is not None:
-        if ext_fmt is not None and ext_fmt != magic_fmt and ext_fmt in {"pdf", "png", "svg", "docx", "jpg"}:
+        # Extension conflicts with a decisive magic → reject.
+        if ext_fmt is not None and ext_fmt != magic_fmt:
             raise InvalidFileError(
                 f"File contents do not match its extension "
                 f"(got {magic_fmt!r}, expected {ext_fmt!r})"
             )
         return magic_fmt
 
-    # No decisive magic — fall back to extension for txt/md.
+    # No decisive magic — use the extension when we can sanity-check the bytes.
     if ext_fmt in {"txt", "md"}:
-        # Sanity check: must be decodable as UTF-8 or Latin-1-ish text.
         try:
             head.decode("utf-8")
         except UnicodeDecodeError:
-            try:
-                head.decode("utf-8", errors="strict")
-            except UnicodeDecodeError:
-                raise InvalidFileError("File is not valid UTF-8 text")
+            raise InvalidFileError("File is not valid UTF-8 text")
+        return ext_fmt
+
+    if ext_fmt in {"docx", "epub"}:
+        # Both are Zip containers. If the file isn't a Zip, reject.
+        if not _looks_like_zip(head):
+            raise InvalidFileError(f"File does not appear to be a valid {ext_fmt}")
         return ext_fmt
 
     if ext_fmt is not None:
-        # e.g. .pdf with garbage magic bytes.
         raise InvalidFileError(f"File does not appear to be a valid {ext_fmt}")
 
     raise UnsupportedFormatError(f"Cannot determine format of {filename!r}")
@@ -86,16 +90,35 @@ def _magic_format(head: bytes) -> str | None:
         return "png"
     if head.startswith(b"\xff\xd8\xff"):
         return "jpg"
-    # DOCX (and any other OOXML) is a Zip file with a specific content-types
-    # part — but sniffing the extension is enough here plus the Zip signature.
+
+    # EPUB per OCF spec: first entry is STORED `mimetype` containing
+    # "application/epub+zip". That places the marker at a fixed offset in
+    # the local file header.
+    if head.startswith(b"PK\x03\x04") and _has_epub_mimetype(head):
+        return "epub"
+
+    # Other Zip signatures are ambiguous (docx/xlsx/epub-nonstandard) — let
+    # the extension decide.
     if head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06") or head.startswith(b"PK\x07\x08"):
-        # We treat any zip with a .docx extension as docx; the actual open
-        # by python-docx / LibreOffice will fail loudly if it isn't.
-        return "docx"
-    # SVG — XML declaration or <svg root. Look at first ~256 bytes.
+        return None
+
     prefix = head[:512].lstrip().lower()
     if prefix.startswith(b"<?xml") and b"<svg" in prefix:
         return "svg"
     if prefix.startswith(b"<svg"):
         return "svg"
     return None
+
+
+def _has_epub_mimetype(head: bytes) -> bool:
+    """True when the buffer's first ZIP entry names `mimetype` and stores it
+    as `application/epub+zip` (i.e. the OCF-required layout)."""
+    # bytes 30..38 hold the local-header filename when name length is 8; the
+    # STORED content immediately follows.
+    if len(head) < 58:
+        return False
+    return head[30:38] == b"mimetype" and head[38:58] == b"application/epub+zip"
+
+
+def _looks_like_zip(head: bytes) -> bool:
+    return head.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"))

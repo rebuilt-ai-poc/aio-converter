@@ -1,6 +1,7 @@
 """HTTP-level tests through FastAPI's TestClient."""
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,14 @@ from app.main import app
 
 
 client = TestClient(app)
+
+
+_pandoc_missing = pytest.mark.skipif(
+    shutil.which("pandoc") is None, reason="pandoc required"
+)
+_typst_missing = pytest.mark.skipif(
+    shutil.which("typst") is None, reason="typst required"
+)
 
 
 def test_health() -> None:
@@ -115,3 +124,56 @@ def test_merge_pdf_rejects_single(fixtures_dir: Path) -> None:
             files=[("files", ("a.pdf", f.read(), "application/pdf"))],
         )
     assert r.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# EPUB round-trips (all through Pandoc; PDF needs Typst too)
+# ---------------------------------------------------------------------------
+@_pandoc_missing
+def test_convert_epub_to_txt(fixtures_dir: Path) -> None:
+    with (fixtures_dir / "simple.epub").open("rb") as f:
+        r = client.post(
+            "/api/convert",
+            data={"output_format": "txt"},
+            files={"file": ("simple.epub", f, "application/epub+zip")},
+        )
+    assert r.status_code == 200, r.text
+    assert "Chapter One" in r.text
+    assert "SIMPLE_EPUB_CH2" in r.text
+    assert "simple.txt" in r.headers["content-disposition"]
+
+
+@_pandoc_missing
+def test_convert_epub_to_markdown(fixtures_dir: Path) -> None:
+    with (fixtures_dir / "simple.epub").open("rb") as f:
+        r = client.post(
+            "/api/convert",
+            data={"output_format": "md"},
+            files={"file": ("simple.epub", f, "application/epub+zip")},
+        )
+    assert r.status_code == 200, r.text
+    assert "# Chapter One" in r.text
+    assert "alpha" in r.text
+    assert r.headers["content-type"].startswith("text/markdown")
+
+
+@_pandoc_missing
+@_typst_missing
+def test_convert_epub_to_pdf(fixtures_dir: Path) -> None:
+    import pymupdf
+
+    with (fixtures_dir / "simple.epub").open("rb") as f:
+        r = client.post(
+            "/api/convert",
+            data={"output_format": "pdf"},
+            files={"file": ("simple.epub", f, "application/epub+zip")},
+        )
+    assert r.status_code == 200, r.text
+    assert r.content.startswith(b"%PDF-")
+    doc = pymupdf.open(stream=r.content, filetype="pdf")
+    try:
+        text = "\n".join(p.get_text("text") for p in doc)
+    finally:
+        doc.close()
+    assert "Chapter One" in text
+    assert "SIMPLE_EPUB_CH2" in text

@@ -17,6 +17,9 @@ and get the converted file back immediately.
 | DOCX    | PDF    | LibreOffice headless       |
 | PNG     | JPEG   | Pillow                     |
 | SVG     | JPEG   | resvg + Pillow             |
+| EPUB    | TXT    | Pandoc                     |
+| EPUB    | MD     | Pandoc                     |
+| EPUB    | PDF    | Pandoc + Typst             |
 
 ## Quick start
 
@@ -97,9 +100,14 @@ Shortest direct path per format; no universal intermediate representation.
   no extractable text, it returns a note saying so.
 - **CJK / emoji in TXT → PDF** need a CJK/emoji font. The bundled Noto Sans
   covers Latin (extended), Greek, and Cyrillic. Missing glyphs become blanks.
-- **DOCX → PDF** requires LibreOffice. **Markdown → PDF** requires Pandoc
-  and Typst. **SVG → JPEG** requires resvg. Missing binaries disable the
-  respective conversion in the UI.
+- **EPUB → *** is delegated to Pandoc. EPUB and PDF have fundamentally
+  different layout models (EPUB is reflowable, PDF is fixed pages); the
+  output aims to be a clean, readable rendering, not a pixel-match of an
+  ebook reader. V1 does not extract embedded images (the Markdown output
+  is a single `.md` without a media folder).
+- **DOCX → PDF** requires LibreOffice. **Markdown → PDF** and **EPUB → \***
+  require Pandoc (and Typst for the PDF outputs). **SVG → JPEG** requires
+  resvg. Missing binaries disable the respective conversion in the UI.
 
 ## Tests
 

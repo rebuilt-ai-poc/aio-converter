@@ -3,15 +3,15 @@
 - TXT -> PDF via ReportLab with a bundled Noto Sans font for full Unicode.
 - Markdown -> PDF via Pandoc + Typst subprocess.
 - DOCX -> PDF via LibreOffice headless, with an isolated per-request profile.
+- EPUB -> {TXT, Markdown, PDF} via Pandoc (+ Typst for PDF).
 """
 from __future__ import annotations
 
-import platform
 import shutil
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from ..core.config import (
     NOTO_SANS_BOLD,
@@ -139,31 +139,77 @@ def _clamp(value: Any, lo: int, hi: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Markdown -> PDF (Pandoc + Typst)
+# Pandoc-backed conversions (Markdown / EPUB in; TXT / Markdown / PDF out)
 # ---------------------------------------------------------------------------
-def markdown_to_pdf(input_path: Path, output_path: Path, options: dict[str, Any]) -> None:
+def _run_pandoc(
+    input_path: Path,
+    output_path: Path,
+    *,
+    from_: str,
+    to: str,
+    pdf_engine: str | None = None,
+    extra: Sequence[str] = (),
+) -> None:
+    """Invoke Pandoc with a controlled argv. Used by MD->PDF and every EPUB->* path.
+
+    All Pandoc arguments are supplied by the route/converter — never by the
+    uploaded content — so filters/templates cannot be injected via the file.
+    """
     pandoc = which("pandoc")
     if not pandoc:
-        raise DependencyMissingError("Pandoc is required for Markdown -> PDF conversion")
-    typst = which("typst")
-    if not typst:
-        raise DependencyMissingError("Typst is required for Markdown -> PDF conversion")
+        raise DependencyMissingError("Pandoc is required for this conversion")
 
-    page_size = str(options.get("page_size", "a4")).lower()
-    if page_size not in _PAGE_SIZES:
-        page_size = "a4"
+    argv: list[str] = [pandoc, str(input_path), f"--from={from_}", f"--to={to}"]
+    if pdf_engine:
+        engine_path = which(pdf_engine)
+        if not engine_path:
+            raise DependencyMissingError(f"{pdf_engine} is required for this conversion")
+        argv.append(f"--pdf-engine={pdf_engine}")
+    argv.extend(extra)
+    argv.extend(["-o", str(output_path)])
 
-    argv = [
-        pandoc,
-        str(input_path),
-        "--pdf-engine=typst",
-        "-V", f"papersize={page_size}",
-        "-o", str(output_path),
-    ]
     run(argv, timeout=TIMEOUT_DOCUMENT, dependency_label="pandoc")
 
     if not output_path.exists() or output_path.stat().st_size == 0:
-        raise ConversionError("Pandoc produced no output PDF")
+        raise ConversionError("Pandoc produced no output")
+
+
+def _page_size(options: dict[str, Any]) -> str:
+    ps = str(options.get("page_size", "a4")).lower()
+    return ps if ps in _PAGE_SIZES else "a4"
+
+
+def markdown_to_pdf(input_path: Path, output_path: Path, options: dict[str, Any]) -> None:
+    _run_pandoc(
+        input_path,
+        output_path,
+        from_="markdown",
+        to="pdf",
+        pdf_engine="typst",
+        extra=["-V", f"papersize={_page_size(options)}"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# EPUB -> TXT / Markdown / PDF (all Pandoc)
+# ---------------------------------------------------------------------------
+def epub_to_txt(input_path: Path, output_path: Path, options: dict[str, Any]) -> None:
+    _run_pandoc(input_path, output_path, from_="epub", to="plain")
+
+
+def epub_to_markdown(input_path: Path, output_path: Path, options: dict[str, Any]) -> None:
+    _run_pandoc(input_path, output_path, from_="epub", to="gfm", extra=["--wrap=none"])
+
+
+def epub_to_pdf(input_path: Path, output_path: Path, options: dict[str, Any]) -> None:
+    _run_pandoc(
+        input_path,
+        output_path,
+        from_="epub",
+        to="pdf",
+        pdf_engine="typst",
+        extra=["-V", f"papersize={_page_size(options)}"],
+    )
 
 
 # ---------------------------------------------------------------------------

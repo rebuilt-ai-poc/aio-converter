@@ -1,4 +1,4 @@
-export type SourceFormat = "pdf" | "txt" | "md" | "docx" | "png" | "svg";
+export type SourceFormat = "pdf" | "txt" | "md" | "docx" | "png" | "svg" | "epub";
 export type TargetFormat = "pdf" | "txt" | "md" | "docx" | "jpg";
 
 export interface SystemInfo {

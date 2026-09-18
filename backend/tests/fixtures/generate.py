@@ -6,6 +6,7 @@ new content.
 from __future__ import annotations
 
 import io
+import zipfile
 from pathlib import Path
 
 FIXTURES = Path(__file__).parent
@@ -197,6 +198,127 @@ def _docx_simple(path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# EPUB (OCF-conformant Zip built by hand — no external EPUB library dep)
+# ---------------------------------------------------------------------------
+_CONTAINER_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>
+"""
+
+_NAV_XHTML = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <head><title>Nav</title></head>
+  <body>
+    <nav epub:type="toc" id="toc"><ol>{items}</ol></nav>
+  </body>
+</html>
+"""
+
+
+def _epub_content_opf(title: str, author: str, chapter_ids: list[str]) -> str:
+    manifest = "\n    ".join(
+        f'<item id="{cid}" href="{cid}.xhtml" media-type="application/xhtml+xml"/>'
+        for cid in chapter_ids
+    )
+    spine = "\n    ".join(f'<itemref idref="{cid}"/>' for cid in chapter_ids)
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid">fixture-{title}</dc:identifier>
+    <dc:title>{title}</dc:title>
+    <dc:creator>{author}</dc:creator>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2026-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    {manifest}
+  </manifest>
+  <spine>
+    {spine}
+  </spine>
+</package>
+"""
+
+
+def _epub_chapter_xhtml(title: str, body_html: str) -> str:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head><title>{title}</title></head>
+  <body>
+    <h1>{title}</h1>
+    {body_html}
+  </body>
+</html>
+"""
+
+
+def _write_epub(path: Path, title: str, author: str, chapters: list[tuple[str, str, str]]) -> None:
+    """Write a minimal, valid EPUB 3.
+
+    chapters = [(id, chapter_title, body_html), ...]  in spine order.
+    """
+    ids = [c[0] for c in chapters]
+    nav_items = "".join(
+        f'<li><a href="{cid}.xhtml">{title}</a></li>' for cid, title, _ in chapters
+    )
+
+    with zipfile.ZipFile(path, "w") as z:
+        # mimetype MUST be first and STORED per OCF spec.
+        info = zipfile.ZipInfo("mimetype")
+        info.compress_type = zipfile.ZIP_STORED
+        z.writestr(info, "application/epub+zip")
+
+        z.writestr("META-INF/container.xml", _CONTAINER_XML)
+        z.writestr("OEBPS/content.opf", _epub_content_opf(title, author, ids))
+        z.writestr("OEBPS/nav.xhtml", _NAV_XHTML.format(items=nav_items))
+        for cid, ctitle, body in chapters:
+            z.writestr(f"OEBPS/{cid}.xhtml", _epub_chapter_xhtml(ctitle, body))
+
+
+def _epub_simple(path: Path) -> None:
+    _write_epub(
+        path,
+        title="Simple EPUB",
+        author="Fixture Author",
+        chapters=[
+            (
+                "ch1",
+                "Chapter One",
+                "<p>The <b>first</b> chapter contains <i>italic</i> text and "
+                "<a href=\"https://example.com\">a link</a>.</p>"
+                "<p>It also has a café reference — Über extended-Latin.</p>"
+                "<ul><li>alpha</li><li>beta</li><li>gamma</li></ul>",
+            ),
+            (
+                "ch2",
+                "Chapter Two",
+                "<p>The second chapter continues the fixture.</p>"
+                "<p>Marker: SIMPLE_EPUB_CH2</p>",
+            ),
+        ],
+    )
+
+
+def _epub_multi(path: Path) -> None:
+    _write_epub(
+        path,
+        title="Ordered EPUB",
+        author="Fixture Author",
+        chapters=[
+            ("c1", "First", "<p>Marker EP#1</p>"),
+            ("c2", "Second", "<p>Marker EP#2</p>"),
+            ("c3", "Third", "<p>Marker EP#3</p>"),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 def generate_all() -> None:
@@ -218,6 +340,9 @@ def generate_all() -> None:
     _md_simple(FIXTURES / "simple.md")
 
     _docx_simple(FIXTURES / "simple.docx")
+
+    _epub_simple(FIXTURES / "simple.epub")
+    _epub_multi(FIXTURES / "ordered.epub")
 
     print("Generated fixtures in", FIXTURES)
 

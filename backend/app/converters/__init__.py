@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .images import png_to_jpeg, svg_to_jpeg
-from .documents import txt_to_pdf, markdown_to_pdf, docx_to_pdf
+from .documents import (
+    docx_to_pdf,
+    epub_to_markdown,
+    epub_to_pdf,
+    epub_to_txt,
+    markdown_to_pdf,
+    txt_to_pdf,
+)
 from .pdf import pdf_to_txt, pdf_to_markdown, pdf_to_docx, merge_pdfs  # noqa: F401
 
 
@@ -25,6 +32,9 @@ CONVERSIONS: dict[tuple[str, str], Converter] = {
     ("docx", "pdf"): docx_to_pdf,
     ("png", "jpg"): png_to_jpeg,
     ("svg", "jpg"): svg_to_jpeg,
+    ("epub", "txt"): epub_to_txt,
+    ("epub", "md"): epub_to_markdown,
+    ("epub", "pdf"): epub_to_pdf,
 }
 
 

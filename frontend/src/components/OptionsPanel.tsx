@@ -92,7 +92,8 @@ export function OptionsPanel({ source, target, options, onChange }: Props) {
     );
   }
 
-  if (source === "md" && target === "pdf") {
+  // Page-size selector applies to Pandoc-based PDF outputs (Markdown, EPUB).
+  if (target === "pdf" && (source === "md" || source === "epub")) {
     return (
       <label className="block">
         <span className="text-sm text-slate-600">Page size</span>

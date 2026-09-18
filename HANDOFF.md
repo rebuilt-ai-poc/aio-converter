@@ -2,10 +2,12 @@
 
 ## Where things stand
 
-All 9 conversions implemented, tested via pytest (30/30 pass, no skips) and
-verified end-to-end via HTTP against real fixture files (19/19 structural
-checks pass). Frontend types clean, `npm run build` succeeds. Dependency
-checker reports 9/9.
+All **12 conversions** implemented (9 original + EPUB → {TXT, MD, PDF}),
+tested via pytest (37/37 pass, no skips) and verified end-to-end via HTTP
+against real fixture files (29/29 structural checks pass across two rounds).
+Frontend types clean, `npm run build` succeeds. Dependency checker reports
+**12/12**. EPUB support reuses the existing Pandoc integration via a shared
+`_run_pandoc` helper — no new dependencies.
 
 ## Environment notes for the next session
 
@@ -36,6 +38,13 @@ checker reports 9/9.
   line) to avoid loops when resetting on new file selection.
 - Pandoc → Typst emits a Typst deprecation notice about `document.set(font: …)`
   when Typst is called; it's harmless and comes from Pandoc's default template.
+- One live EPUB → PDF request out of the first ~30 returned a `pandoc rc=43`
+  transient "Error producing PDF" from Typst's default template (looked like
+  a `conf(…)` init hiccup — possibly Typst's font/package cache warming).
+  Every subsequent attempt (and 3× consecutive retries on the same fixture)
+  succeeded and produced byte-identical output. Pytest never reproduces it.
+  If it recurs in production, look at Typst cache init and consider a warmup
+  invocation at startup, or a single automatic retry inside `_run_pandoc`.
 
 ## How to run right now
 
@@ -51,7 +60,7 @@ npm run dev
 # open http://localhost:5173
 ```
 
-Tests: `cd backend && uv run pytest` — all 30 pass with the same PATH.
+Tests: `cd backend && uv run pytest` — all 37 pass with the same PATH.
 
 ## What's next if we continue
 

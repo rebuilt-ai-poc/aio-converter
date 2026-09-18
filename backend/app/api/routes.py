@@ -92,6 +92,13 @@ def _pair_available(source: str, target: str, engines: dict[str, bool]) -> bool:
         return engines["libreoffice"]
     if (source, target) == ("svg", "jpg"):
         return engines["resvg"] and engines["pillow"]
+    if source == "epub":
+        # All EPUB conversions go through Pandoc; PDF adds Typst.
+        if not engines["pandoc"]:
+            return False
+        if target == "pdf":
+            return engines["typst"]
+        return target in {"txt", "md"}
     if source == "pdf":
         return engines["pymupdf"] and (engines["pymupdf4llm"] if target == "md" else True) and (engines["python_docx"] if target == "docx" else True)
     if (source, target) == ("txt", "pdf"):
